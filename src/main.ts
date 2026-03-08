@@ -11,21 +11,21 @@
 //
 // ```
 // ┌─────────────────────────────────────────────────────────────────────────┐
-// │                              main.ts                                     │
-// │                        (Punto de entrada)                               │
-// │                                                                          │
-// │  ┌──────────────┐    ┌──────────────────┐    ┌────────────────────┐    │
-// │  │   Eventos    │───>│  Estado de UI    │───>│    Renderizado     │    │
-// │  │   (click,    │    │  (UiState)       │    │  (CountryCard,     │    │
-// │  │    input)    │    │                  │    │   CountryModal)    │    │
-// │  └──────────────┘    └──────────────────┘    └────────────────────┘    │
-// │          │                    ▲                        │               │
-// │          │                    │                        │               │
-// │          ▼                    │                        │               │
-// │  ┌──────────────────────────────────────────────────────┐             │
-// │  │              countryApi.ts (Servicio)                 │             │
-// │  │         (Comunicación con REST Countries)             │             │
-// │  └──────────────────────────────────────────────────────┘             │
+// │                                  main.ts                                 │
+// │                             (Punto de entrada)                          │
+// │                                                                         │
+// │  ┌──────────────┐    ┌──────────────────┐    ┌────────────────────┐     │
+// │  │   Eventos    │───>│  Estado de UI    │───>│     Renderizado     │     │
+// │  │   (click,    │    │  (UiState)       │    │  (CountryCard,     │     │
+// │  │    input)    │    │                  │    │   CountryModal)    │     │
+// │  └──────────────┘    └──────────────────┘    └────────────────────┘     │
+// │          │                    ▲                        │                │
+// │          │                    │                        │                │
+// │          ▼                    │                        │                │
+// │  ┌──────────────────────────────────────────────────────┐               │
+// │  │              countryApi.ts (Servicio)                │               │
+// │  │         (Comunicación con REST Countries)             │               │
+// │  └──────────────────────────────────────────────────────┘               │
 // └─────────────────────────────────────────────────────────────────────────┘
 // ```
 // =============================================================================
@@ -49,6 +49,9 @@ let currentState: UiState = { status: 'idle' };
 /** Última búsqueda realizada (para evitar búsquedas duplicadas) */
 let lastSearchQuery = '';
 
+/** Región seleccionada actualmente */
+let currentRegion = 'all';
+
 // =============================================================================
 // REFERENCIAS A ELEMENTOS DEL DOM
 // =============================================================================
@@ -65,6 +68,7 @@ let errorMessage: HTMLElement;
 let emptyState: HTMLElement;
 let noResultsState: HTMLElement;
 let countriesList: HTMLElement;
+let regionFilter: HTMLSelectElement;
 
 /**
  * Inicializa las referencias a los elementos del DOM.
@@ -80,6 +84,7 @@ function initializeElements(): void {
   emptyState = getRequiredElement<HTMLElement>('#emptyState');
   noResultsState = getRequiredElement<HTMLElement>('#noResultsState');
   countriesList = getRequiredElement<HTMLElement>('#countriesList');
+  regionFilter = getRequiredElement<HTMLSelectElement>('#regionFilter');
 }
 
 // =============================================================================
@@ -178,20 +183,23 @@ function render(state: UiState): void {
  */
 async function handleSearch(): Promise<void> {
   const query = searchInput.value.trim();
+  const region = regionFilter.value;
 
-  // Si la búsqueda está vacía, volvemos al estado inicial
-  if (query.length === 0) {
+  // Si la búsqueda está vacía y no hay región seleccionada, volvemos al estado inicial
+  if (query.length === 0 && region === 'all') {
     render({ status: 'idle' });
     lastSearchQuery = '';
+    currentRegion = 'all';
     return;
   }
 
-  // Evitamos búsquedas duplicadas
-  if (query === lastSearchQuery && currentState.status === 'success') {
+  // Evitamos búsquedas duplicadas (mismo texto y misma región)
+  if (query === lastSearchQuery && region === currentRegion && currentState.status === 'success') {
     return;
   }
 
   lastSearchQuery = query;
+  currentRegion = region;
 
   // Mostramos estado de carga
   render({ status: 'loading' });
@@ -203,12 +211,19 @@ async function handleSearch(): Promise<void> {
     // await pausa la ejecución hasta que la Promise se resuelve.
     // Si la Promise se rechaza, el error se captura en el catch.
     // =========================================================================
-    const countries = await searchCountries(query);
+    
+    // Si el query está vacío pero hay región, buscamos 'all' para filtrar localmente
+    const countries = await searchCountries(query || 'all');
 
-    if (countries.length === 0) {
+    // Aplicamos el filtro de región sobre los resultados de la API
+    const filteredCountries = region === 'all' 
+      ? countries 
+      : countries.filter(c => c.region === region);
+
+    if (filteredCountries.length === 0) {
       render({ status: 'empty' });
     } else {
-      render({ status: 'success', data: countries });
+      render({ status: 'success', data: filteredCountries });
     }
   } catch (error) {
     // Determinamos el mensaje de error apropiado
@@ -241,7 +256,7 @@ function handleCountryClick(country: Country): void {
  * Maneja el evento de reintentar después de un error.
  */
 function handleRetry(): void {
-  handleSearch();
+  void handleSearch();
 }
 
 // =============================================================================
@@ -279,6 +294,11 @@ function setupEventListeners(): void {
     if (event.key === 'Enter') {
       void handleSearch();
     }
+  });
+
+  // Selector de región: búsqueda/filtrado inmediato al cambiar
+  regionFilter.addEventListener('change', () => {
+    void handleSearch();
   });
 
   // Botón de reintentar

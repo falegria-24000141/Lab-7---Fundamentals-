@@ -11,21 +11,21 @@
 //
 // ```
 // ┌─────────────────────────────────────────────────────────────────────────┐
-// │                                  main.ts                                 │
-// │                             (Punto de entrada)                          │
-// │                                                                         │
-// │  ┌──────────────┐    ┌──────────────────┐    ┌────────────────────┐     │
-// │  │   Eventos    │───>│  Estado de UI    │───>│     Renderizado     │     │
-// │  │   (click,    │    │  (UiState)       │    │  (CountryCard,     │     │
-// │  │    input)    │    │                  │    │   CountryModal)    │     │
-// │  └──────────────┘    └──────────────────┘    └────────────────────┘     │
-// │          │                    ▲                        │                │
-// │          │                    │                        │                │
-// │          ▼                    │                        │                │
-// │  ┌──────────────────────────────────────────────────────┐               │
-// │  │              countryApi.ts (Servicio)                │               │
-// │  │         (Comunicación con REST Countries)             │               │
-// │  └──────────────────────────────────────────────────────┘               │
+// │                                  main.ts                                 │
+// │                             (Punto de entrada)                          │
+// │                                                                         │
+// │  ┌──────────────┐    ┌──────────────────┐    ┌────────────────────┐     │
+// │  │   Eventos    │───>│  Estado de UI    │───>│     Renderizado     │     │
+// │  │   (click,    │    │  (UiState)       │    │  (CountryCard,     │     │
+// │  │    input)    │    │                  │    │   CountryModal)    │     │
+// │  └──────────────┘    └──────────────────┘    └────────────────────┘     │
+// │          │                    ▲                        │                │
+// │          │                    │                        │                │
+// │          ▼                    │                        │                │
+// │  ┌──────────────────────────────────────────────────────┐               │
+// │  │              countryApi.ts (Servicio)                │               │
+// │  │         (Comunicación con REST Countries)             │               │
+// │  └──────────────────────────────────────────────────────┘               │
 // └─────────────────────────────────────────────────────────────────────────┘
 // ```
 // =============================================================================
@@ -35,6 +35,9 @@ import { searchCountries, ApiError } from './services/countryApi';
 import { renderCountryList } from './components/CountryCard';
 import { openModal } from './components/CountryModal';
 import { getRequiredElement, showElement, hideElement, onDOMReady, debounce } from './utils/dom';
+import { isFavorite } from './utils/storage';
+
+
 
 // =============================================================================
 // ESTADO DE LA APLICACIÓN
@@ -42,9 +45,6 @@ import { getRequiredElement, showElement, hideElement, onDOMReady, debounce } fr
 // Mantenemos un estado global simple. En aplicaciones más grandes, usaríamos
 // un patrón de gestión de estado más sofisticado (Redux, Zustand, etc.).
 // =============================================================================
-
-/** Estado actual de la UI */
-let currentState: UiState = { status: 'idle' };
 
 /** Última búsqueda realizada (para evitar búsquedas duplicadas) */
 let lastSearchQuery = '';
@@ -69,22 +69,24 @@ let emptyState: HTMLElement;
 let noResultsState: HTMLElement;
 let countriesList: HTMLElement;
 let regionFilter: HTMLSelectElement;
+let favoritesFilter: HTMLInputElement;
 
 /**
- * Inicializa las referencias a los elementos del DOM.
- * Se llama una vez cuando la aplicación arranca.
- */
+ * Inicializa las referencias a los elementos del DOM.
+ * Se llama una vez cuando la aplicación arranca.
+ */
 function initializeElements(): void {
-  searchInput = getRequiredElement<HTMLInputElement>('#searchInput');
-  searchButton = getRequiredElement<HTMLButtonElement>('#searchButton');
-  retryButton = getRequiredElement<HTMLButtonElement>('#retryButton');
-  loadingState = getRequiredElement<HTMLElement>('#loadingState');
-  errorState = getRequiredElement<HTMLElement>('#errorState');
-  errorMessage = getRequiredElement<HTMLElement>('#errorMessage');
-  emptyState = getRequiredElement<HTMLElement>('#emptyState');
-  noResultsState = getRequiredElement<HTMLElement>('#noResultsState');
-  countriesList = getRequiredElement<HTMLElement>('#countriesList');
-  regionFilter = getRequiredElement<HTMLSelectElement>('#regionFilter');
+  searchInput = getRequiredElement<HTMLInputElement>('#searchInput');
+  searchButton = getRequiredElement<HTMLButtonElement>('#searchButton');
+  retryButton = getRequiredElement<HTMLButtonElement>('#retryButton');
+  loadingState = getRequiredElement<HTMLElement>('#loadingState');
+  errorState = getRequiredElement<HTMLElement>('#errorState');
+  errorMessage = getRequiredElement<HTMLElement>('#errorMessage');
+  emptyState = getRequiredElement<HTMLElement>('#emptyState');
+  noResultsState = getRequiredElement<HTMLElement>('#noResultsState');
+  countriesList = getRequiredElement<HTMLElement>('#countriesList');
+  regionFilter = getRequiredElement<HTMLSelectElement>('#regionFilter');
+  favoritesFilter = getRequiredElement<HTMLInputElement>('#favoritesFilter');
 }
 
 // =============================================================================
@@ -95,76 +97,75 @@ function initializeElements(): void {
 // =============================================================================
 
 /**
- * Oculta todos los estados de la UI.
- * Llamamos esto antes de mostrar un nuevo estado.
- */
+ * Oculta todos los estados de la UI.
+ * Llamamos esto antes de mostrar un nuevo estado.
+ */
 function hideAllStates(): void {
-  hideElement(loadingState);
-  hideElement(errorState);
-  hideElement(emptyState);
-  hideElement(noResultsState);
-  hideElement(countriesList);
+  hideElement(loadingState);
+  hideElement(errorState);
+  hideElement(emptyState);
+  hideElement(noResultsState);
+  hideElement(countriesList);
 }
 
 /**
- * Renderiza la UI según el estado actual.
- *
- * ## Patrón de renderizado basado en estado
- * En lugar de manipular la UI directamente en respuesta a eventos,
- * actualizamos el estado y luego renderizamos basándonos en él.
- * Esto hace el código más predecible y fácil de debuggear.
- *
- * @param state - Nuevo estado de la UI
- */
+ * Renderiza la UI según el estado actual.
+ *
+ * ## Patrón de renderizado basado en estado
+ * En lugar de manipular la UI directamente en respuesta a eventos,
+ * actualizamos el estado y luego renderizamos basándonos en él.
+ * Esto hace el código más predecible y fácil de debuggear.
+ *
+ * @param state - Nuevo estado de la UI
+ */
 function render(state: UiState): void {
-  currentState = state;
-  hideAllStates();
+  hideAllStates();
 
-  // =========================================================================
-  // SWITCH EXHAUSTIVO
-  // =========================================================================
-  // TypeScript verifica que manejemos todos los casos posibles.
-  // Si agregamos un nuevo estado y olvidamos manejarlo, dará error.
-  // =========================================================================
-  switch (state.status) {
-    case 'idle':
-      // Estado inicial: mostramos mensaje de bienvenida
-      showElement(emptyState);
-      break;
+  // =========================================================================
+  // SWITCH EXHAUSTIVO
+  // =========================================================================
+  // TypeScript verifica que manejemos todos los casos posibles.
+  // Si agregamos un nuevo estado y olvidamos manejarlo, dará error.
+  // =========================================================================
+  switch (state.status) {
+    case 'idle':
+      // Estado inicial: mostramos mensaje de bienvenida
+      showElement(emptyState);
+      break;
 
-    case 'loading':
-      // Buscando países: mostramos spinner
-      showElement(loadingState);
-      break;
+    case 'loading':
+      // Buscando países: mostramos spinner
+      showElement(loadingState);
+      break;
 
-    case 'success':
-      // Búsqueda exitosa con resultados
-      if (state.data.length === 0) {
-        showElement(noResultsState);
-      } else {
-        showElement(countriesList);
-        renderCountryList(state.data, countriesList, handleCountryClick);
-      }
-      break;
+    case 'success':
+      // Búsqueda exitosa con resultados
+      if (state.data.length === 0) {
+        showElement(noResultsState);
+      } else {
+        showElement(countriesList);
+        renderCountryList(state.data, countriesList, handleCountryClick);
+      }
+      break;
 
-    case 'error':
-      // Error en la búsqueda
-      showElement(errorState);
-      errorMessage.textContent = state.message;
-      break;
+    case 'error':
+      // Error en la búsqueda
+      showElement(errorState);
+      errorMessage.textContent = state.message;
+      break;
 
-    case 'empty':
-      // Sin resultados para la búsqueda
-      showElement(noResultsState);
-      break;
+    case 'empty':
+      // Sin resultados para la búsqueda
+      showElement(noResultsState);
+      break;
 
-    default: {
-      // Este bloque nunca debería ejecutarse si manejamos todos los casos
-      // TypeScript usa esto para verificación de exhaustividad
-      const _exhaustiveCheck: never = state;
-      console.error('Estado no manejado:', _exhaustiveCheck);
-    }
-  }
+    default: {
+      // Este bloque nunca debería ejecutarse si manejamos todos los casos
+      // TypeScript usa esto para verificación de exhaustividad
+      const _exhaustiveCheck: never = state;
+      console.error('Estado no manejado:', _exhaustiveCheck);
+    }
+  }
 }
 
 // =============================================================================
@@ -172,91 +173,91 @@ function render(state: UiState): void {
 // =============================================================================
 
 /**
- * Maneja la búsqueda de países.
- *
- * ## Flujo de la búsqueda:
- * 1. Obtenemos el valor del input
- * 2. Validamos que haya texto
- * 3. Mostramos estado de carga
- * 4. Hacemos la petición a la API
- * 5. Mostramos resultados o error
- */
+ * Maneja la búsqueda de países.
+ *
+ * ## Flujo de la búsqueda:
+ * 1. Obtenemos el valor del input
+ * 2. Validamos que haya texto
+ * 3. Mostramos estado de carga
+ * 4. Hacemos la petición a la API
+ * 5. Mostramos resultados o error
+ */
 async function handleSearch(): Promise<void> {
-  const query = searchInput.value.trim();
-  const region = regionFilter.value;
+  const query = searchInput.value.trim();
+  const region = regionFilter.value;
+  const onlyFavorites = favoritesFilter.checked;
 
-  // Si la búsqueda está vacía y no hay región seleccionada, volvemos al estado inicial
-  if (query.length === 0 && region === 'all') {
-    render({ status: 'idle' });
-    lastSearchQuery = '';
-    currentRegion = 'all';
-    return;
-  }
+  // Si no hay búsqueda, ni región, ni favoritos, volvemos al estado inicial
+  if (query.length === 0 && region === 'all' && !onlyFavorites) {
+    render({ status: 'idle' });
+    lastSearchQuery = '';
+    currentRegion = 'all';
+    return;
+  }
 
-  // Evitamos búsquedas duplicadas (mismo texto y misma región)
-  if (query === lastSearchQuery && region === currentRegion && currentState.status === 'success') {
-    return;
-  }
+  render({ status: 'loading' });
 
-  lastSearchQuery = query;
-  currentRegion = region;
+  try {
+    // =========================================================================
+    // ASYNC/AWAIT Y MANEJO DE ERRORES
+    // =========================================================================
+    // await pausa la ejecución hasta que la Promise se resuelve.
+    // Si la Promise se rechaza, el error se captura en el catch.
+    // =========================================================================
+    
+    // Si el query está vacío pero hay región, buscamos 'all' para filtrar localmente
+    const countries = await searchCountries(query || 'all');
 
-  // Mostramos estado de carga
-  render({ status: 'loading' });
+    // FILTRO COMBINADO: Región + Favoritos
+    let filteredCountries = countries;
 
-  try {
-    // =========================================================================
-    // ASYNC/AWAIT Y MANEJO DE ERRORES
-    // =========================================================================
-    // await pausa la ejecución hasta que la Promise se resuelve.
-    // Si la Promise se rechaza, el error se captura en el catch.
-    // =========================================================================
-    
-    // Si el query está vacío pero hay región, buscamos 'all' para filtrar localmente
-    const countries = await searchCountries(query || 'all');
+    // 1. Filtrar por región
+    if (region !== 'all') {
+      filteredCountries = filteredCountries.filter(c => c.region === region);
+    }
 
-    // Aplicamos el filtro de región sobre los resultados de la API
-    const filteredCountries = region === 'all' 
-      ? countries 
-      : countries.filter(c => c.region === region);
+    // 2. Filtrar por favoritos (si el switch está activo)
+    if (onlyFavorites) {
+      filteredCountries = filteredCountries.filter(c => isFavorite(c.name.common));
+    }
 
-    if (filteredCountries.length === 0) {
-      render({ status: 'empty' });
-    } else {
-      render({ status: 'success', data: filteredCountries });
-    }
-  } catch (error) {
-    // Determinamos el mensaje de error apropiado
-    let message = 'Error desconocido al buscar países';
+    if (filteredCountries.length === 0) {
+      render({ status: 'empty' });
+    } else {
+      render({ status: 'success', data: filteredCountries });
+    }
+  } catch (error) {
+    // Determinamos el mensaje de error apropiado
+    let message = 'Error desconocido al buscar países';
 
-    if (error instanceof ApiError) {
-      message = error.message;
-    } else if (error instanceof Error) {
-      message = error.message;
-    }
+    if (error instanceof ApiError) {
+      message = error.message;
+    } else if (error instanceof Error) {
+      message = error.message;
+    }
 
-    render({ status: 'error', message });
+    render({ status: 'error', message });
 
-    // Log para debugging (en producción usaríamos un servicio de logging)
-    console.error('Error en búsqueda:', error);
-  }
+    // Log para debugging (en producción usaríamos un servicio de logging)
+    console.error('Error en búsqueda:', error);
+  }
 }
 
 /**
- * Maneja el click en una tarjeta de país.
- * Abre el modal con los detalles del país.
- *
- * @param country - País seleccionado
- */
+ * Maneja el click en una tarjeta de país.
+ * Abre el modal con los detalles del país.
+ *
+ * @param country - País seleccionado
+ */
 function handleCountryClick(country: Country): void {
-  openModal(country);
+  openModal(country);
 }
 
 /**
- * Maneja el evento de reintentar después de un error.
- */
+ * Maneja el evento de reintentar después de un error.
+ */
 function handleRetry(): void {
-  void handleSearch();
+  void handleSearch();
 }
 
 // =============================================================================
@@ -264,72 +265,77 @@ function handleRetry(): void {
 // =============================================================================
 
 /**
- * Configura los event listeners de la aplicación.
- *
- * ## Event Listeners
- * Conectamos los elementos del DOM con sus manejadores de eventos.
- * Usamos debounce para el input para evitar demasiadas peticiones.
- */
+ * Configura los event listeners de la aplicación.
+ *
+ * ## Event Listeners
+ * Conectamos los elementos del DOM con sus manejadores de eventos.
+ * Usamos debounce para el input para evitar demasiadas peticiones.
+ */
 function setupEventListeners(): void {
-  // =========================================================================
-  // BÚSQUEDA CON DEBOUNCE
-  // =========================================================================
-  // El debounce retrasa la ejecución hasta que el usuario deja de escribir.
-  // Esto evita hacer una petición por cada tecla presionada.
-  // =========================================================================
-  const debouncedSearch = debounce(() => {
-    void handleSearch();
-  }, 400);
+  // =========================================================================
+  // BÚSQUEDA CON DEBOUNCE
+  // =========================================================================
+  // El debounce retrasa la ejecución hasta que el usuario deja de escribir.
+  // Esto evita hacer una petición por cada tecla presionada.
+  // =========================================================================
+  const debouncedSearch = debounce(() => {
+    void handleSearch();
+  }, 400);
 
-  // Input: búsqueda mientras se escribe (con debounce)
-  searchInput.addEventListener('input', debouncedSearch);
+  // Input: búsqueda mientras se escribe (con debounce)
+  searchInput.addEventListener('input', debouncedSearch);
 
-  // Botón de búsqueda: búsqueda inmediata
-  searchButton.addEventListener('click', () => {
-    void handleSearch();
-  });
+  // Botón de búsqueda: búsqueda inmediata
+  searchButton.addEventListener('click', () => {
+    void handleSearch();
+  });
 
-  // Enter en el input: búsqueda inmediata
-  searchInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      void handleSearch();
-    }
-  });
+  // Enter en el input: búsqueda inmediata
+  searchInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      void handleSearch();
+    }
+  });
 
-  // Selector de región: búsqueda/filtrado inmediato al cambiar
-  regionFilter.addEventListener('change', () => {
-    void handleSearch();
-  });
+  // Selector de región: búsqueda/filtrado inmediato al cambiar
+  regionFilter.addEventListener('change', () => {
+    void handleSearch();
+  });
 
-  // Botón de reintentar
-  retryButton.addEventListener('click', handleRetry);
+  // Listener para el switch de favoritos
+  favoritesFilter.addEventListener('change', () => {
+    void handleSearch();
+  });
+
+  // Botón de reintentar
+  retryButton.addEventListener('click', handleRetry);
 }
 
 /**
- * Inicializa la aplicación.
- *
- * ## Punto de entrada principal
- * Esta función se ejecuta cuando el DOM está completamente cargado.
- * Es el equivalente a `onCreate` en Android o `mounted` en Vue.
- */
+ * Inicializa la aplicación.
+ *
+ * ## Punto de entrada principal
+ * Esta función se ejecuta cuando el DOM está completamente cargado.
+ * Es el equivalente a `onCreate` en Android o `mounted` en Vue.
+ */
 function initializeApp(): void {
-  try {
-    // Obtenemos referencias a los elementos del DOM
-    initializeElements();
+  try {
+    // Obtenemos referencias a los elementos del DOM
+    initializeElements();
 
-    // Configuramos los event listeners
-    setupEventListeners();
+    // Configuramos los event listeners
+    setupEventListeners();
 
-    // Mostramos el estado inicial
-    render({ status: 'idle' });
+    // Mostramos el estado inicial
+    render({ status: 'idle' });
 
-    // Enfocamos el input de búsqueda para UX
-    searchInput.focus();
+    // Enfocamos el input de búsqueda para UX
+    searchInput.focus();
 
-    console.log('Country Explorer inicializado correctamente');
-  } catch (error) {
-    console.error('Error al inicializar la aplicación:', error);
-  }
+    console.log('Country Explorer inicializado correctamente');
+  } catch (error) {
+    console.error('Error al inicializar la aplicación:', error);
+  }
 }
 
 // =============================================================================
